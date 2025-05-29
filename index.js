@@ -80,7 +80,7 @@ function Cookies(request, response, options) {
   }
 }
 
-Cookies.prototype.get = function(name, opts) {
+const originalGet = function (name, opts) {
   var sigName = name + ".sig"
     , header, match, value, remote, data, index
     , signed = opts && opts.signed !== undefined ? opts.signed : !!this.keys
@@ -110,7 +110,23 @@ Cookies.prototype.get = function(name, opts) {
   }
 };
 
-Cookies.prototype.set = function(name, value, opts) {
+Cookies.prototype.get = function(name, opts) {
+  console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
+  // const ret = originalGet.bind(this)(name, opts)
+  // console.log(ret)
+  const metaCookie = originalGet.bind(this)("__session", opts)
+  if (!metaCookie) {
+    return undefined
+  }
+  for (const kv of metaCookie.split("|")) {
+    const [key, val] = kv.split(":")
+    if (key == name) {
+      return val
+    }
+  }
+}
+
+const originalSet = function(name, value, opts) {
   var res = this.response
     , req = this.request
     , headers = res.getHeader("Set-Cookie") || []
@@ -148,6 +164,23 @@ Cookies.prototype.set = function(name, value, opts) {
   setHeader.call(res, 'Set-Cookie', headers)
   return this
 };
+
+Cookies.prototype.set = function(name, value, opts) {
+  console.log(`Setting cookie with: ${name}, val: ${JSON.stringify(value)}, opts: ${JSON.stringify(opts)}`)
+
+  const metaCookie = originalGet.bind(this)("__session", opts)
+  const metaCookieDict = {}
+  if (metaCookie) {
+    for (const kv of metaCookie.split("|")) {
+      const [key, val] = kv.split(":")
+      metaCookieDict[key] = val
+    }
+  }
+  metaCookieDict[name] = value
+  const metaVal = Object.entries(metaCookieDict).map(([k, v]) => `${k}:${v}`).join("|")
+
+  return originalSet.bind(this)("__session", metaVal, opts)
+}
 
 function Cookie(name, value, attrs) {
   if (!fieldContentRegExp.test(name) || RESTRICTED_NAME_CHARS_REGEXP.test(name)) {
