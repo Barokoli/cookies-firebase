@@ -111,9 +111,7 @@ const originalGet = function (name, opts) {
 };
 
 Cookies.prototype.get = function(name, opts) {
-  console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
-  // const ret = originalGet.bind(this)(name, opts)
-  // console.log(ret)
+  // console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
   const metaCookie = originalGet.bind(this)("__session", opts)
   if (!metaCookie) {
     return undefined
@@ -166,15 +164,18 @@ const originalSet = function(name, value, opts) {
 };
 
 Cookies.prototype.set = function(name, value, opts) {
-  console.log(`Setting cookie with: ${name}, val: ${JSON.stringify(value)}, opts: ${JSON.stringify(opts)}`)
+  // console.log(`Setting cookie with: ${name}, val: ${JSON.stringify(value)}, opts: ${JSON.stringify(opts)}`)
 
-  const metaCookie = originalGet.bind(this)("__session", opts)
+  const headers = this.response.getHeader("Set-Cookie") ?? []
+  let match
+  const previousValue = (match=headers.find((h) => h.startsWith("__session=")))?.substring("__session=".length, match.indexOf(";"))
   const metaCookieDict = {}
-  if (metaCookie) {
-    for (const kv of metaCookie.split("|")) {
+  if (previousValue) {
+    for (const kv of previousValue.split("|")) {
       const [key, val] = kv.split(":")
       metaCookieDict[key] = val
     }
+    opts.overwrite = true
   }
   metaCookieDict[name] = value
   const metaVal = Object.entries(metaCookieDict).map(([k, v]) => `${k}:${v}`).join("|")
@@ -298,6 +299,7 @@ function isRequestEncrypted (req) {
 
 function pushCookie(headers, cookie) {
   if (cookie.overwrite) {
+    // console.log("Overwriting cookie")
     for (var i = headers.length - 1; i >= 0; i--) {
       if (headers[i].indexOf(cookie.name + '=') === 0) {
         headers.splice(i, 1)
