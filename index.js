@@ -167,8 +167,15 @@ Cookies.prototype.set = function(name, value, opts) {
   // console.log(`Setting cookie with: ${name}, val: ${JSON.stringify(value)}, opts: ${JSON.stringify(opts)}`)
 
   const headers = this.response.getHeader("Set-Cookie") ?? []
+  // console.log(`Previous Headers: ${JSON.stringify(headers)}`)
+  // console.log(`Value: ${JSON.stringify(value)}`)
+  // console.log(`Opts: ${JSON.stringify(opts)}`)
   let match
-  const previousValue = (match=headers.find((h) => h.startsWith("__session=")))?.substring("__session=".length, match.indexOf(";"))
+  function getPath(s) {
+    const path = s.match(/(?:^|;\s*)path=([^;]+)/i);
+    return path ? path[1] : ""
+  }
+  const previousValue = (match=headers.find((h) => h.startsWith("__session=") && getPath(h) === opts.path))?.substring("__session=".length, match.indexOf(";"))
   const metaCookieDict = {}
   if (previousValue) {
     for (const kv of previousValue.split("|")) {
@@ -300,14 +307,20 @@ function isRequestEncrypted (req) {
 function pushCookie(headers, cookie) {
   if (cookie.overwrite) {
     // console.log("Overwriting cookie")
+    // console.log(JSON.stringify(cookie))
+    // console.log(`Overwriting cookie: ${JSON.stringify(headers)}`)
     for (var i = headers.length - 1; i >= 0; i--) {
-      if (headers[i].indexOf(cookie.name + '=') === 0) {
-        headers.splice(i, 1)
+      const path = headers[i].match(/(?:^|;\s*)path=([^;]+)/i);
+      if (path && path[1] === cookie.path) {
+        if (headers[i].indexOf(cookie.name + '=') === 0) {
+          headers.splice(i, 1)
+        }
       }
     }
   }
 
   headers.push(cookie.toHeader())
+  // console.log(`Resulting headers: ${headers}`)
 }
 
 Cookies.connect = Cookies.express = function(keys) {
