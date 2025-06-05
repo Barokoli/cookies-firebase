@@ -80,67 +80,158 @@ function Cookies(request, response, options) {
   }
 }
 
-const originalGet = function (name, opts, multiple) {
+const originalGet = function (name, opts) {
   var sigName = name + ".sig"
-    , header, value, remote, data, index
+    , header, match, value, remote, data, index
     , signed = opts && opts.signed !== undefined ? opts.signed : !!this.keys
 
   header = this.request.headers["cookie"]
-  // console.log(`Original header: ${header}`)
   if (!header) return
 
-  const pattern = getPattern(name, multiple)
-  let matches = []
-  if (multiple) {
-    matches = [...header.matchAll(pattern)];
+  match = header.match(getPattern(name))
+  if (!match) return
+
+  value = match[1]
+  if (value[0] === '"') value = value.slice(1, -1)
+  if (!opts || !signed) return value
+
+  remote = this.get(sigName)
+  if (!remote) return
+
+  data = name + "=" + value
+  if (!this.keys) throw new Error('.keys required for signed cookies');
+  index = this.keys.index(data, remote)
+
+  if (index < 0) {
+    this.set(sigName, null, {path: "/", signed: false })
   } else {
-    matches = [header.match()]
+    index && this.set(sigName, this.keys.sign(data), { signed: false })
+    return value
   }
-
-  const results = []
-  for (const match of matches) {
-    if (!match) continue
-
-    value = match[1]
-    if (value[0] === '"') value = value.slice(1, -1)
-    if (!opts || !signed) {
-      results.push(value)
-      continue
-    }
-
-    remote = this.get(sigName)
-    if (!remote) continue
-
-    data = name + "=" + value
-    if (!this.keys) throw new Error('.keys required for signed cookies');
-    index = this.keys.index(data, remote)
-
-    if (index < 0) {
-      this.set(sigName, null, {path: "/", signed: false })
-    } else {
-      index && this.set(sigName, this.keys.sign(data), { signed: false })
-      results.push(value)
-    }
-  }
-
-  return multiple ? results : (results.length === 1 ? results[0] : undefined)
 };
 
-Cookies.prototype.get = function(name, opts) {
-  // console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
-  const metaCookies = originalGet.bind(this)("__session", opts, true)
-  console.log(`Metacookies (${name}): ${JSON.stringify(metaCookies)}`)
-  if (!metaCookies) {
-    return undefined
-  }
-  for (const metaCookie of metaCookies) {
-    for (const kv of metaCookie.split("|")) {
-      const [key, val] = kv.split(":")
-      if (key == name) {
-        return val
+function getCookieFromJar(jar, key, opts) {
+  console.log(`Requesturl: ${this.request.url}`)
+  const spath = opts.path ? `${this.request.url}/${opts.path}`: this.request.url
+  console.log(`Looking for ${key} at ${spath} in ${JSON.stringify(jar)}. (t:${(Date.now() / 1000)})`)
+  const path = spath.split("/").flatMap((seg) => seg !== "" ? [seg] : [])
+  let data = jar
+  let result
+
+  function checkData() {
+    if ("#" in data && key in data["#"]) {
+      // take cookie
+      const {v, e} = data["#"][key]
+      if (!e || e > Date.now() / 1000) {
+        console.log(`Found: ${JSON.stringify(v)}`)
+        return v
+      } else {
+        console.log(`Key expired.`)
       }
     }
   }
+
+  result = checkData()
+  if (result !== undefined) return result
+  for (const segment of path) {
+    console.log(`Segment: ${segment}`)
+    if (!(segment in data)) {
+      console.log(`${segment} not in ${JSON.stringify(data)}`)
+      break
+    }
+    data = data[segment]
+    result = checkData()
+    if (result !== undefined) return result
+  }
+  return undefined
+}
+
+function putCookieInJar(jar, key, value, opts) {
+  const path = (opts.path ?? "").split("/").flatMap((seg) => seg !== "" ? [seg] : [])
+  let data = jar
+  for (const segment of path) {
+    if (!(segment in data)) {
+      data[segment] = {}
+    }
+    data = data[segment]
+  }
+  data["#"] = data["#"] ?? {}
+  data["#"][key] = {
+    v: value,
+  }
+  if (opts.maxAge) {
+    data["#"][key]["e"] = Math.floor((Date.now() + opts.maxAge) / 1000)
+    console.log(`Store expire: ${opts.maxAge} -> ${(Date.now() + opts.maxAge)} -> ${Math.floor((Date.now() + opts.maxAge) / 1000)}`)
+  }
+}
+
+function cookieJarData(jar) {
+  const results = [];
+
+  function traverse(current) {
+    if ("#" in current) {
+      results.push(current["#"]);
+    }
+
+    for (const key in current) {
+      if (key !== "#" && typeof current[key] !== "string") {
+        traverse(current[key]);
+      }
+    }
+  }
+
+  traverse(jar);
+  return results;
+}
+
+function getCookieJar(opts) {
+  const mopts = Object.assign({}, opts)
+  delete mopts.path
+  const cookieSession = originalGet.bind(this)("__session", mopts)
+
+  if (!cookieSession) {
+    return {}
+  }
+
+  return JSON.parse(decodeURIComponent(cookieSession))
+}
+
+function storeCookieJar(jar, opts) {
+  const data = cookieJarData(jar)
+  let maxExpire = undefined
+  let expire = true
+  for (const d of data) {
+    for (const [k, val] in Object.entries(d)) {
+      if (val) {
+        const {v, e} = val
+        if (e < Date.now() / 1000) {
+          delete d[k]
+        } else {
+          maxExpire = Math.max(maxExpire ?? 0, e)
+          if (e === undefined) {
+            expire = false
+          }
+        }
+      }
+    }
+  }
+
+  const mopts = Object.assign({}, opts)
+  mopts.overwrite = true
+  delete mopts.path
+  if (expire && maxExpire !== undefined) {
+    mopts.maxAge = (+maxExpire) * 1000
+  } else {
+    delete mopts.maxAge
+  }
+
+  originalSet.bind(this)("__session", encodeURIComponent(JSON.stringify(jar)), mopts)
+}
+
+Cookies.prototype.get = function(name, opts) {
+  // console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
+  const jar = getCookieJar.bind(this)(opts)
+  return getCookieFromJar.bind(this)(jar, name, opts)
 }
 
 const originalSet = function(name, value, opts) {
@@ -183,47 +274,18 @@ const originalSet = function(name, value, opts) {
 };
 
 Cookies.prototype.set = function(name, value, opts) {
-  // console.log(`Setting cookie with: ${name}, val: ${JSON.stringify(value)}, opts: ${JSON.stringify(opts)}`)
-
-  //only used to compare the set cookies.
-  // originalSet.bind(this)(name, value, opts)
-
+  const jar = getCookieJar.bind(this)(opts)
   const headers = this.response.getHeader("Set-Cookie") ?? []
-  // console.log(`Previous Headers: ${JSON.stringify(headers)}`)
-  // console.log(`Value: ${JSON.stringify(value)}`)
-  // console.log(`Opts: ${JSON.stringify(opts)}`)
-  let match
-  function getPath(s) {
-    const path = s.match(/(?:^|;\s*)path=([^;]+)/i);
-    // console.log(`Matched path: ${path?.[1]}`)
-    return path ? path[1] : ""
-  }
-  // console.log(`opts path: ${opts.path}`)
-  const previousValue = (match=headers.find((h) => h.startsWith("__session=") && getPath(h) === opts.path))?.substring("__session=".length, match.indexOf(";"))
-
-  const metaCookieDict = {}
-  // console.log(`Previous value: ${previousValue}`)
-  if (previousValue) {
-    for (const kv of previousValue.split("|")) {
-      const [key, val] = kv.split(":")
-      metaCookieDict[key] = val
+  if(headers.length > 0) {
+    console.log(`Mergin. Before: ${JSON.stringify(jar)}`)
+    const cookie = headers[0].match(getPattern("__session"))?.[1]
+    if (cookie) {
+      Object.assign(jar, JSON.parse(decodeURIComponent(cookie)))
     }
-    opts.overwrite = true
+    console.log(`After: ${JSON.stringify(jar)}`)
   }
-
-  if (value === null) {
-    if (!previousValue) {
-      return originalSet.bind(this)("__session", null, opts)
-    } else {
-      delete metaCookieDict[name]
-    }
-  } else {
-    metaCookieDict[name] = value
-  }
-
-  const metaVal = Object.entries(metaCookieDict).map(([k, v]) => `${k}:${v}`).join("|")
-
-  return originalSet.bind(this)("__session", metaVal, opts)
+  putCookieInJar(jar, name, value, opts)
+  storeCookieJar.bind(this)(jar)
 }
 
 function Cookie(name, value, attrs) {
@@ -255,6 +317,7 @@ function Cookie(name, value, attrs) {
     throw new TypeError('option domain is invalid');
   }
 
+  console.log(this.maxAge)
   if (typeof this.maxAge === 'number' ? (isNaN(this.maxAge) || !isFinite(this.maxAge)) : this.maxAge) {
     throw new TypeError('option maxAge is invalid')
   }
