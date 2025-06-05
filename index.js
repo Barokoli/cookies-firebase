@@ -80,46 +80,65 @@ function Cookies(request, response, options) {
   }
 }
 
-const originalGet = function (name, opts) {
+const originalGet = function (name, opts, multiple) {
   var sigName = name + ".sig"
-    , header, match, value, remote, data, index
+    , header, value, remote, data, index
     , signed = opts && opts.signed !== undefined ? opts.signed : !!this.keys
 
   header = this.request.headers["cookie"]
+  // console.log(`Original header: ${header}`)
   if (!header) return
 
-  match = header.match(getPattern(name))
-  if (!match) return
-
-  value = match[1]
-  if (value[0] === '"') value = value.slice(1, -1)
-  if (!opts || !signed) return value
-
-  remote = this.get(sigName)
-  if (!remote) return
-
-  data = name + "=" + value
-  if (!this.keys) throw new Error('.keys required for signed cookies');
-  index = this.keys.index(data, remote)
-
-  if (index < 0) {
-    this.set(sigName, null, {path: "/", signed: false })
+  const pattern = getPattern(name, multiple)
+  let matches = []
+  if (multiple) {
+    matches = [...header.matchAll(pattern)];
   } else {
-    index && this.set(sigName, this.keys.sign(data), { signed: false })
-    return value
+    matches = [header.match()]
   }
+
+  const results = []
+  for (const match of matches) {
+    if (!match) continue
+
+    value = match[1]
+    if (value[0] === '"') value = value.slice(1, -1)
+    if (!opts || !signed) {
+      results.push(value)
+      continue
+    }
+
+    remote = this.get(sigName)
+    if (!remote) continue
+
+    data = name + "=" + value
+    if (!this.keys) throw new Error('.keys required for signed cookies');
+    index = this.keys.index(data, remote)
+
+    if (index < 0) {
+      this.set(sigName, null, {path: "/", signed: false })
+    } else {
+      index && this.set(sigName, this.keys.sign(data), { signed: false })
+      results.push(value)
+    }
+  }
+
+  return multiple ? results : (results.length === 1 ? results[0] : undefined)
 };
 
 Cookies.prototype.get = function(name, opts) {
   // console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
-  const metaCookie = originalGet.bind(this)("__session", opts)
-  if (!metaCookie) {
+  const metaCookies = originalGet.bind(this)("__session", opts, true)
+  // console.log(`Metacookies: ${JSON.stringify(metaCookies)}`)
+  if (!metaCookies) {
     return undefined
   }
-  for (const kv of metaCookie.split("|")) {
-    const [key, val] = kv.split(":")
-    if (key == name) {
-      return val
+  for (const metaCookie of metaCookies) {
+    for (const kv of metaCookie.split("|")) {
+      const [key, val] = kv.split(":")
+      if (key == name) {
+        return val
+      }
     }
   }
 }
@@ -166,6 +185,9 @@ const originalSet = function(name, value, opts) {
 Cookies.prototype.set = function(name, value, opts) {
   // console.log(`Setting cookie with: ${name}, val: ${JSON.stringify(value)}, opts: ${JSON.stringify(opts)}`)
 
+  //only used to compare the set cookies.
+  // originalSet.bind(this)(name, value, opts)
+
   const headers = this.response.getHeader("Set-Cookie") ?? []
   // console.log(`Previous Headers: ${JSON.stringify(headers)}`)
   // console.log(`Value: ${JSON.stringify(value)}`)
@@ -173,10 +195,14 @@ Cookies.prototype.set = function(name, value, opts) {
   let match
   function getPath(s) {
     const path = s.match(/(?:^|;\s*)path=([^;]+)/i);
+    // console.log(`Matched path: ${path?.[1]}`)
     return path ? path[1] : ""
   }
+  // console.log(`opts path: ${opts.path}`)
   const previousValue = (match=headers.find((h) => h.startsWith("__session=") && getPath(h) === opts.path))?.substring("__session=".length, match.indexOf(";"))
+
   const metaCookieDict = {}
+  // console.log(`Previous value: ${previousValue}`)
   if (previousValue) {
     for (const kv of previousValue.split("|")) {
       const [key, val] = kv.split(":")
@@ -184,7 +210,17 @@ Cookies.prototype.set = function(name, value, opts) {
     }
     opts.overwrite = true
   }
-  metaCookieDict[name] = value
+
+  if (value === null) {
+    if (!previousValue) {
+      return originalSet.bind(this)("__session", null, opts)
+    } else {
+      delete metaCookieDict[name]
+    }
+  } else {
+    metaCookieDict[name] = value
+  }
+
   const metaVal = Object.entries(metaCookieDict).map(([k, v]) => `${k}:${v}`).join("|")
 
   return originalSet.bind(this)("__session", metaVal, opts)
@@ -278,12 +314,12 @@ deprecate.property(Cookie.prototype, 'maxage', '"maxage"; use "maxAge" instead')
  * @private
  */
 
-function getPattern (name) {
+function getPattern (name, multiple=false) {
   if (!REGEXP_CACHE[name]) {
     REGEXP_CACHE[name] = new RegExp(
       '(?:^|;) *' +
       name.replace(REGEXP_ESCAPE_CHARS_REGEXP, '\\$&') +
-      '=([^;]*)'
+      '=([^;]*)', multiple ? "g" : ""
     )
   }
 
