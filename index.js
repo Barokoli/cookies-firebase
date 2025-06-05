@@ -129,7 +129,7 @@ const originalGet = function (name, opts, multiple) {
 Cookies.prototype.get = function(name, opts) {
   // console.log(`Getting cookie with: ${name}, ${JSON.stringify(opts)}`)
   const metaCookies = originalGet.bind(this)("__session", opts, true)
-  // console.log(`Metacookies: ${JSON.stringify(metaCookies)}`)
+  console.log(`Metacookies (${name}): ${JSON.stringify(metaCookies)}`)
   if (!metaCookies) {
     return undefined
   }
