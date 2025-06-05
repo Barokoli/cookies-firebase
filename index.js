@@ -111,9 +111,9 @@ const originalGet = function (name, opts) {
 };
 
 function getCookieFromJar(jar, key, opts) {
-  console.log(`Requesturl: ${this.request.url}`)
+  // console.log(`Requesturl: ${this.request.url}`)
   const spath = opts.path ? `${this.request.url}/${opts.path}`: this.request.url
-  console.log(`Looking for ${key} at ${spath} in ${JSON.stringify(jar)}. (t:${(Date.now() / 1000)})`)
+  // console.log(`Looking for ${key} at ${spath} in ${JSON.stringify(jar)}. (t:${(Date.now() / 1000)})`)
   const path = spath.split("/").flatMap((seg) => seg !== "" ? [seg] : [])
   let data = jar
   let result
@@ -123,10 +123,10 @@ function getCookieFromJar(jar, key, opts) {
       // take cookie
       const {v, e} = data["#"][key]
       if (!e || e > Date.now() / 1000) {
-        console.log(`Found: ${JSON.stringify(v)}`)
+        // console.log(`Found: ${JSON.stringify(v)}`)
         return v
       } else {
-        console.log(`Key expired.`)
+        // console.log(`Key expired.`)
       }
     }
   }
@@ -134,9 +134,7 @@ function getCookieFromJar(jar, key, opts) {
   result = checkData()
   if (result !== undefined) return result
   for (const segment of path) {
-    console.log(`Segment: ${segment}`)
     if (!(segment in data)) {
-      console.log(`${segment} not in ${JSON.stringify(data)}`)
       break
     }
     data = data[segment]
@@ -161,7 +159,7 @@ function putCookieInJar(jar, key, value, opts) {
   }
   if (opts.maxAge) {
     data["#"][key]["e"] = Math.floor((Date.now() + opts.maxAge) / 1000)
-    console.log(`Store expire: ${opts.maxAge} -> ${(Date.now() + opts.maxAge)} -> ${Math.floor((Date.now() + opts.maxAge) / 1000)}`)
+    // console.log(`Store expire: ${opts.maxAge} -> ${(Date.now() + opts.maxAge)} -> ${Math.floor((Date.now() + opts.maxAge) / 1000)}`)
   }
 }
 
@@ -277,12 +275,12 @@ Cookies.prototype.set = function(name, value, opts) {
   const jar = getCookieJar.bind(this)(opts)
   const headers = this.response.getHeader("Set-Cookie") ?? []
   if(headers.length > 0) {
-    console.log(`Mergin. Before: ${JSON.stringify(jar)}`)
+    // console.log(`Mergin. Before: ${JSON.stringify(jar)}`)
     const cookie = headers[0].match(getPattern("__session"))?.[1]
     if (cookie) {
       Object.assign(jar, JSON.parse(decodeURIComponent(cookie)))
     }
-    console.log(`After: ${JSON.stringify(jar)}`)
+    // console.log(`After: ${JSON.stringify(jar)}`)
   }
   putCookieInJar(jar, name, value, opts)
   storeCookieJar.bind(this)(jar)
@@ -317,7 +315,6 @@ function Cookie(name, value, attrs) {
     throw new TypeError('option domain is invalid');
   }
 
-  console.log(this.maxAge)
   if (typeof this.maxAge === 'number' ? (isNaN(this.maxAge) || !isFinite(this.maxAge)) : this.maxAge) {
     throw new TypeError('option maxAge is invalid')
   }
